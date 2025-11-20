@@ -135,7 +135,7 @@ pipeline {
                             DEPLOY_DIR=$(mktemp -d)
                             cd $DEPLOY_DIR
 
-                            git clone -b ${CURRENT_BRANCH} https://${GIT_USER}:${GIT_PASS}@github.com/vladyslav-panchenko280/django-app.git .
+                            git clone -b ${CURRENT_BRANCH} https://${GIT_USER}:${GIT_PASS}@github.com/vladyslav-panchenko280/django-jenkins-app.git .
 
                             VALUES_FILE="charts/django-app/values-${DEPLOY_ENV}.yaml"
 
@@ -152,7 +152,7 @@ Build: ${BUILD_NUMBER}
 Environment: ${DEPLOY_ENV}
 Image: ${IMAGE_NAME}:django-${DEPLOY_ENV}
 Commit: $(git rev-parse --short HEAD)"
-                                    git push https://${GIT_USER}:${GIT_PASS}@github.com/vladyslav-panchenko280/django-app.git ${CURRENT_BRANCH}
+                                    git push https://${GIT_USER}:${GIT_PASS}@github.com/vladyslav-panchenko280/django-jenkins-app.git ${CURRENT_BRANCH}
                                     echo "Updated deployment repository on branch ${CURRENT_BRANCH}"
                                 else
                                     echo "No changes to commit"
@@ -169,14 +169,21 @@ Commit: $(git rev-parse --short HEAD)"
 
     post {
         success {
-            echo "Build succeeded"
-            echo "Image: ${IMAGE_NAME}:${IMAGE_TAG_FINAL}"
+            script {
+                echo "Build succeeded"
+                echo "Image: ${IMAGE_NAME}:${IMAGE_TAG_FINAL}"
+            }
         }
         failure {
-            echo "Build failed - check logs"
+            script {
+                echo "Build failed - check logs"
+            }
         }
         cleanup {
-            cleanWs()
+            script {
+                cleanWs()
+            }
         }
     }
 }
+
