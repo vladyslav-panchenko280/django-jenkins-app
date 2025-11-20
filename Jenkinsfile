@@ -1,9 +1,35 @@
 pipeline {
-    agent any
+    agent {
+        kubernetes {
+            yaml '''
+                apiVersion: v1
+                kind: Pod
+                metadata:
+                  labels:
+                    jenkins: agent
+                spec:
+                  serviceAccountName: jenkins-sa
+                  containers:
+                  - name: default
+                    image: alpine:latest
+                    command:
+                    - cat
+                    tty: true
+                  - name: docker
+                    image: docker:20.10-dind
+                    securityContext:
+                      privileged: true
+                    env:
+                    - name: DOCKER_TLS_CERTDIR
+                      value: ""
+            '''
+        }
+    }
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timeout(time: 30, unit: 'MINUTES')
+        timestamps()
     }
 
     parameters {
@@ -57,56 +83,67 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                checkout scm
-                sh '''
-                    echo "Git commit: $(git rev-parse --short HEAD)"
-                    echo "Git branch: $(git rev-parse --abbrev-ref HEAD)"
-                '''
+                container('default') {
+                    checkout scm
+                    sh '''
+                        echo "Git commit: $(git rev-parse --short HEAD)"
+                        echo "Git branch: $(git rev-parse --abbrev-ref HEAD)"
+                    '''
+                }
             }
         }
 
         stage('Build with Docker') {
             steps {
-                sh '''
-                    echo "Building Docker image with ${DOCKERFILE}..."
-                    cd ${BUILD_CONTEXT}
-                    docker build \
-                        -f ${DOCKERFILE} \
-                        -t ${IMAGE_NAME}:${IMAGE_TAG_FINAL} \
-                        -t ${IMAGE_NAME}:django-${DEPLOY_ENV} \
-                        --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
-                        --build-arg VCS_REF=$(git rev-parse --short HEAD) \
-                        --build-arg VERSION=${IMAGE_TAG_FINAL} \
-                        .
-                '''
+                container('docker') {
+                    sh '''
+                        echo "Building Docker image with ${DOCKERFILE}..."
+                        cd ${BUILD_CONTEXT}
+                        docker build \
+                            -f ${DOCKERFILE} \
+                            -t ${IMAGE_NAME}:${IMAGE_TAG_FINAL} \
+                            -t ${IMAGE_NAME}:django-${DEPLOY_ENV} \
+                            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+                            --build-arg VCS_REF=$(git rev-parse --short HEAD) \
+                            --build-arg VERSION=${IMAGE_TAG_FINAL} \
+                            .
+                    '''
+                }
             }
         }
 
         stage('Test Image') {
             steps {
-                sh '''
-                    echo "Testing Docker image..."
-                    docker inspect ${IMAGE_NAME}:${IMAGE_TAG_FINAL}
-                    echo "Image size: $(docker images --format "{{.Size}}" ${IMAGE_NAME}:${IMAGE_TAG_FINAL})"
-                '''
+                container('docker') {
+                    sh '''
+                        echo "Testing Docker image..."
+                        docker inspect ${IMAGE_NAME}:${IMAGE_TAG_FINAL}
+                        echo "Image size: $(docker images --format "{{.Size}}" ${IMAGE_NAME}:${IMAGE_TAG_FINAL})"
+                    '''
+                }
             }
         }
 
         stage('Push to ECR') {
             steps {
-                sh '''
-                    echo "Authenticating with ECR..."
-                    aws ecr get-login-password --region ${AWS_REGION} | \
-                        docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                container('docker') {
+                    sh '''
+                        echo "Installing AWS CLI..."
+                        apk add --no-cache aws-cli
 
-                    echo "Pushing images to ECR..."
-                    docker push ${IMAGE_NAME}:${IMAGE_TAG_FINAL}
-                    docker push ${IMAGE_NAME}:django-${DEPLOY_ENV}
+                        echo "Authenticating with ECR..."
+                        aws ecr get-login-password --region ${AWS_REGION} | \
+                            docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
-                    echo "Images successfully pushed to ECR"
-                    echo "  - ${IMAGE_NAME}:${IMAGE_TAG_FINAL}"
-                    echo "  - ${IMAGE_NAME}:django-${DEPLOY_ENV}"
-                '''
+                        echo "Pushing images to ECR..."
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG_FINAL}
+                        docker push ${IMAGE_NAME}:django-${DEPLOY_ENV}
+
+                        echo "Images successfully pushed to ECR"
+                        echo "  - ${IMAGE_NAME}:${IMAGE_TAG_FINAL}"
+                        echo "  - ${IMAGE_NAME}:django-${DEPLOY_ENV}"
+                    '''
+                }
             }
         }
 
@@ -119,13 +156,14 @@ pipeline {
                 }
             }
             steps {
-                script {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'github-token',
-                        usernameVariable: 'GIT_USER',
-                        passwordVariable: 'GIT_PASS'
-                    )]) {
-                        sh '''
+                container('default') {
+                    script {
+                        withCredentials([usernamePassword(
+                            credentialsId: 'github-token',
+                            usernameVariable: 'GIT_USER',
+                            passwordVariable: 'GIT_PASS'
+                        )]) {
+                            sh '''
                             git config --global user.email "jenkins@example.com"
                             git config --global user.name "Jenkins CI/CD"
 
@@ -161,6 +199,7 @@ Commit: $(git rev-parse --short HEAD)"
                                 echo "Values file not found: $VALUES_FILE"
                             fi
                         '''
+                        }
                     }
                 }
             }
@@ -180,9 +219,7 @@ Commit: $(git rev-parse --short HEAD)"
             }
         }
         cleanup {
-            script {
-                cleanWs()
-            }
+            deleteDir()
         }
     }
 }
