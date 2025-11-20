@@ -15,6 +15,9 @@ pipeline {
                     command:
                     - cat
                     tty: true
+                    volumeMounts:
+                    - name: workspace
+                      mountPath: /workspace
                   - name: docker
                     image: docker:20.10-dind
                     securityContext:
@@ -22,6 +25,12 @@ pipeline {
                     env:
                     - name: DOCKER_TLS_CERTDIR
                       value: ""
+                    volumeMounts:
+                    - name: workspace
+                      mountPath: /workspace
+                  volumes:
+                  - name: workspace
+                    emptyDir: {}
             '''
         }
     }
@@ -84,11 +93,13 @@ pipeline {
         stage('Checkout') {
             steps {
                 container('default') {
-                    checkout scm
-                    sh '''
-                        echo "Git commit: $(git rev-parse --short HEAD)"
-                        echo "Git branch: $(git rev-parse --abbrev-ref HEAD)"
-                    '''
+                    dir('/workspace') {
+                        checkout scm
+                        sh '''
+                            echo "Git commit: $(git rev-parse --short HEAD)"
+                            echo "Git branch: $(git rev-parse --abbrev-ref HEAD)"
+                        '''
+                    }
                 }
             }
         }
@@ -97,16 +108,31 @@ pipeline {
             steps {
                 container('docker') {
                     sh '''
+                        cd /workspace
+                        echo "Current directory: $(pwd)"
+                        echo "Listing workspace:"
+                        ls -la
+
                         echo "Building Docker image with ${DOCKERFILE}..."
-                        cd ${BUILD_CONTEXT}
+                        DOCKERFILE_PATH=$(find . -name "${DOCKERFILE}" -type f | head -1)
+                        if [ -z "$DOCKERFILE_PATH" ]; then
+                            echo "ERROR: ${DOCKERFILE} not found!"
+                            find . -name "*.Dockerfile" -o -name "Dockerfile*"
+                            exit 1
+                        fi
+
+                        CONTEXT_DIR=$(dirname "$DOCKERFILE_PATH")
+                        echo "Using context: $CONTEXT_DIR"
+                        echo "Using dockerfile: $DOCKERFILE_PATH"
+
                         docker build \
-                            -f ${DOCKERFILE} \
+                            -f "$DOCKERFILE_PATH" \
                             -t ${IMAGE_NAME}:${IMAGE_TAG_FINAL} \
                             -t ${IMAGE_NAME}:django-${DEPLOY_ENV} \
                             --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
                             --build-arg VCS_REF=$(git rev-parse --short HEAD) \
                             --build-arg VERSION=${IMAGE_TAG_FINAL} \
-                            .
+                            "$CONTEXT_DIR"
                     '''
                 }
             }
@@ -164,6 +190,7 @@ pipeline {
                             passwordVariable: 'GIT_PASS'
                         )]) {
                             sh '''
+                            cd /workspace
                             git config --global user.email "jenkins@example.com"
                             git config --global user.name "Jenkins CI/CD"
 
