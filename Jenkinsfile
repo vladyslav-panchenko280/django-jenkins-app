@@ -15,9 +15,6 @@ pipeline {
                     command:
                     - cat
                     tty: true
-                    volumeMounts:
-                    - name: workspace
-                      mountPath: /workspace
                   - name: docker
                     image: docker:20.10-dind
                     securityContext:
@@ -25,12 +22,6 @@ pipeline {
                     env:
                     - name: DOCKER_TLS_CERTDIR
                       value: ""
-                    volumeMounts:
-                    - name: workspace
-                      mountPath: /workspace
-                  volumes:
-                  - name: workspace
-                    emptyDir: {}
             '''
         }
     }
@@ -92,15 +83,11 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                container('default') {
-                    dir('/workspace') {
-                        checkout scm
-                        sh '''
-                            echo "Git commit: $(git rev-parse --short HEAD)"
-                            echo "Git branch: $(git rev-parse --abbrev-ref HEAD)"
-                        '''
-                    }
-                }
+                checkout scm
+                sh '''
+                    echo "Git commit: $(git rev-parse --short HEAD)"
+                    echo "Git branch: $(git rev-parse --abbrev-ref HEAD)"
+                '''
             }
         }
 
@@ -108,7 +95,6 @@ pipeline {
             steps {
                 container('docker') {
                     sh '''
-                        cd /workspace
                         echo "Current directory: $(pwd)"
                         echo "Listing workspace:"
                         ls -la
@@ -182,15 +168,13 @@ pipeline {
                 }
             }
             steps {
-                container('default') {
-                    script {
-                        withCredentials([usernamePassword(
-                            credentialsId: 'github-token',
-                            usernameVariable: 'GIT_USER',
-                            passwordVariable: 'GIT_PASS'
-                        )]) {
-                            sh '''
-                            cd /workspace
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'github-token',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_PASS'
+                    )]) {
+                        sh '''
                             git config --global user.email "jenkins@example.com"
                             git config --global user.name "Jenkins CI/CD"
 
@@ -226,7 +210,6 @@ Commit: $(git rev-parse --short HEAD)"
                                 echo "Values file not found: $VALUES_FILE"
                             fi
                         '''
-                        }
                     }
                 }
             }
@@ -250,4 +233,5 @@ Commit: $(git rev-parse --short HEAD)"
         }
     }
 }
+
 
